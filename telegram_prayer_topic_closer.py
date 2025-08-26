@@ -14,7 +14,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # --------------------- CONFIG ---------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN")   # <-- set BOT_TOKEN in Render
+BOT_TOKEN = os.getenv("TOKEN")   # <-- set BOT_TOKEN in Render
 if not TOKEN:
     print("⚠️ BOT_TOKEN not set in env vars; set BOT_TOKEN or the program will exit on start.")
 
