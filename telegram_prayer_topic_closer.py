@@ -14,9 +14,9 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # --------------------- CONFIG ---------------------
-BOT_TOKEN = os.getenv("TOKEN")   # <-- set BOT_TOKEN in Render
-if not TOKEN:
-    print("⚠️ BOT_TOKEN not set in env vars; set BOT_TOKEN or the program will exit on start.")
+BOT_TOKEN = os.getenv("TOKEN")   # <-- set TOKEN in Render
+if not BOT_TOKEN:
+    print("⚠️ BOT_TOKEN not set in env vars; set TOKEN or the program will exit on start.")
 
 LAT = 36.7538
 LON = 3.0588
@@ -51,6 +51,8 @@ def save_config(cfg: dict):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
+# ------------------- COMMANDS -------------------
+
 async def bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_message is None:
         return
@@ -59,22 +61,23 @@ async def bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if thread_id is None:
         await update.effective_message.reply_text("Enable Topics and run /bind inside the target topic.")
         return
+
     cfg = load_config()
-    cfg.setdefault("bindings", [])
-    # store per-chat bindings (simple append)
-    cfg["bindings"].append({"chat_id": chat_id, "thread_id": thread_id})
+    # overwrite previous binding for this chat
+    cfg["bindings"] = [{"chat_id": chat_id, "thread_id": thread_id}]
     save_config(cfg)
-    await update.effective_message.reply_text(f"Saved!\nchat_id={chat_id}\nthread_id={thread_id}")
+
+    await update.effective_message.reply_text(f"✅ Binding saved!\nchat_id={chat_id}\nthread_id={thread_id}")
 
 async def testclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg = load_config()
-    # use latest binding
     if not cfg.get("bindings"):
         await update.effective_message.reply_text("No binding found. Run /bind inside the topic.")
         return
     b = cfg["bindings"][-1]
+
+    await context.bot.send_message(chat_id=b["chat_id"], message_thread_id=b["thread_id"], text="⏳ Closing topic (test)...")
     await context.bot.closeForumTopic(chat_id=b["chat_id"], message_thread_id=b["thread_id"])
-    await context.bot.send_message(chat_id=b["chat_id"], message_thread_id=b["thread_id"], text="⏳ Topic closed (test)")
 
 async def testopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg = load_config()
@@ -82,8 +85,11 @@ async def testopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("No binding found. Run /bind inside the topic.")
         return
     b = cfg["bindings"][-1]
+
     await context.bot.reopenForumTopic(chat_id=b["chat_id"], message_thread_id=b["thread_id"])
     await context.bot.send_message(chat_id=b["chat_id"], message_thread_id=b["thread_id"], text="✅ Topic reopened (test)")
+
+# ------------------- PRAYER TIMES -------------------
 
 def fetch_prayer_times(d: date):
     tz = ZoneInfo(TIMEZONE)
@@ -109,37 +115,47 @@ async def close_then_open(context: ContextTypes.DEFAULT_TYPE, prayer_name: str):
     chat_id = b["chat_id"]
     thread_id = b["thread_id"]
 
-    await context.bot.closeForumTopic(chat_id=chat_id, message_thread_id=thread_id)
     messages = {
-        "Fajr": "صلاة الفجر يرحمكم الله",
-        "Dhuhr": "صلاة الظهر يرحمكم الله",
-        "Asr": "صلاة العصر يرحمكم الله",
-        "Maghrib": "صلاة المغرب يرحمكم الله",
-        "Isha": "صلاة العشاء يرحمكم الله",
+        "Fajr": "🕌 صلاة الفجر يرحمكم الله",
+        "Dhuhr": "🕌 صلاة الظهر يرحمكم الله",
+        "Asr": "🕌 صلاة العصر يرحمكم الله",
+        "Maghrib": "🕌 صلاة المغرب يرحمكم الله",
+        "Isha": "🕌 صلاة العشاء يرحمكم الله",
     }
-    # send closing message
+
     msg = messages.get(prayer_name, f"⏳ وقت الصلاة: {prayer_name}")
     await context.bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=msg)
 
+    # close after sending
+    await context.bot.closeForumTopic(chat_id=chat_id, message_thread_id=thread_id)
+
+    # wait prayer duration
     minutes = DURATIONS.get(prayer_name, 20)
     await asyncio.sleep(minutes * 60)
 
+    # reopen
     await context.bot.reopenForumTopic(chat_id=chat_id, message_thread_id=thread_id)
     await context.bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=f"✅ Topic reopened after {prayer_name}.")
 
 def schedule_today(application: Application):
     tz = ZoneInfo(TIMEZONE)
     now = datetime.now(tz)
-    t = fetch_prayer_times(now.date())
-    for name, when_dt in t.items():
+    times = fetch_prayer_times(now.date())
+
+    for name, when_dt in times.items():
         if when_dt > now + timedelta(seconds=5):
-            # capture name in default arg
-            application.job_queue.run_once(lambda ctx, n=name: asyncio.create_task(close_then_open(ctx, n)), when=when_dt)
-    midnight_tomorrow = datetime.combine(now.date() + timedelta(days=1), time(0,5), tzinfo=tz)
+            async def job(ctx: ContextTypes.DEFAULT_TYPE, prayer=name):
+                await close_then_open(ctx, prayer)
+            application.job_queue.run_once(job, when=when_dt)
+
+    # reschedule tomorrow at 00:05
+    midnight_tomorrow = datetime.combine(now.date() + timedelta(days=1), time(0, 5), tzinfo=tz)
     application.job_queue.run_once(lambda ctx: schedule_today(application), when=midnight_tomorrow)
 
+# ------------------- BOT SETUP -------------------
+
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Salaam! Use /bind in a topic to control it. Commands: /testclose /testopen")
+    await update.message.reply_text("Salaam! Use /bind in a topic to control it.\nCommands: /testclose /testopen")
 
 async def on_ready(app: Application):
     schedule_today(app)
@@ -149,11 +165,11 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 def main():
-    if not TOKEN:
+    if not BOT_TOKEN:
         print("ERROR: BOT_TOKEN not set. Exiting.")
         return
 
-    application = Application.builder().token(TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("bind", bind))
     application.add_handler(CommandHandler("testclose", testclose))
