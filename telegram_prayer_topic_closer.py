@@ -238,6 +238,11 @@ def main():
         return
 
     application = Application.builder().token(BOT_TOKEN).build()
+
+# Ensure JobQueue exists
+if application.job_queue is None:
+    application.job_queue = application.job_queue_class(application)
+
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("bind", bind))
     application.add_handler(CommandHandler("testclose", testclose))
