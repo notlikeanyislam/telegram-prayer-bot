@@ -59,7 +59,7 @@ async def bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     thread_id = update.effective_message.message_thread_id
     if thread_id is None:
-        await update.effective_message.reply_text("Enable Topics and run /bind inside the target topic.")
+        await update.effective_message.reply_text("⚠️ قم بتفعيل المواضيع ثم نفذ /bind داخل الموضوع المطلوب.")
         return
 
     cfg = load_config()
@@ -67,27 +67,27 @@ async def bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg["bindings"] = [{"chat_id": chat_id, "thread_id": thread_id}]
     save_config(cfg)
 
-    await update.effective_message.reply_text(f"✅ Binding saved!\nchat_id={chat_id}\nthread_id={thread_id}")
+    await update.effective_message.reply_text("✅ تم حفظ الربط مع هذا الموضوع.")
 
 async def testclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg = load_config()
     if not cfg.get("bindings"):
-        await update.effective_message.reply_text("No binding found. Run /bind inside the topic.")
+        await update.effective_message.reply_text("⚠️ لا يوجد ربط. استعمل /bind داخل الموضوع أولاً.")
         return
     b = cfg["bindings"][-1]
 
-    await context.bot.send_message(chat_id=b["chat_id"], message_thread_id=b["thread_id"], text="⏳ Closing topic (test)...")
+    await context.bot.send_message(chat_id=b["chat_id"], message_thread_id=b["thread_id"], text="⏳ سيتم غلق الموضوع (تجربة)...")
     await context.bot.closeForumTopic(chat_id=b["chat_id"], message_thread_id=b["thread_id"])
 
 async def testopen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg = load_config()
     if not cfg.get("bindings"):
-        await update.effective_message.reply_text("No binding found. Run /bind inside the topic.")
+        await update.effective_message.reply_text("⚠️ لا يوجد ربط. استعمل /bind داخل الموضوع أولاً.")
         return
     b = cfg["bindings"][-1]
 
     await context.bot.reopenForumTopic(chat_id=b["chat_id"], message_thread_id=b["thread_id"])
-    await context.bot.send_message(chat_id=b["chat_id"], message_thread_id=b["thread_id"], text="✅ Topic reopened (test)")
+    await context.bot.send_message(chat_id=b["chat_id"], message_thread_id=b["thread_id"], text="✅ تم إعادة فتح الموضوع (تجربة)")
 
 # ------------------- PRAYER TIMES -------------------
 
@@ -135,7 +135,7 @@ async def close_then_open(context: ContextTypes.DEFAULT_TYPE, prayer_name: str):
 
     # reopen
     await context.bot.reopenForumTopic(chat_id=chat_id, message_thread_id=thread_id)
-    await context.bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=f"✅ Topic reopened after {prayer_name}.")
+    await context.bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=f"✅ تم إعادة فتح الموضوع بعد صلاة {prayer_name}.")
 
 def schedule_today(application: Application):
     tz = ZoneInfo(TIMEZONE)
@@ -152,10 +152,33 @@ def schedule_today(application: Application):
     midnight_tomorrow = datetime.combine(now.date() + timedelta(days=1), time(0, 5), tzinfo=tz)
     application.job_queue.run_once(lambda ctx: schedule_today(application), when=midnight_tomorrow)
 
+# ------------------- EXTRA COMMANDS -------------------
+
+async def times_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tz = ZoneInfo(TIMEZONE)
+    today = datetime.now(tz).date()
+    times = fetch_prayer_times(today)
+
+    # Format date as DD-MM-YYYY
+    date_str = today.strftime("%d-%m-%Y")
+
+    msg = f"🕌 أوقات الصلاة ليوم {date_str} (الجزائر العاصمة):\n\n"
+    for name, dt in times.items():
+        arabic_names = {
+            "Fajr": "الفجر",
+            "Dhuhr": "الظهر",
+            "Asr": "العصر",
+            "Maghrib": "المغرب",
+            "Isha": "العشاء",
+        }
+        msg += f"{arabic_names.get(name, name)}: {dt.strftime('%H:%M')}\n"
+
+    await update.message.reply_text(msg)
+
 # ------------------- BOT SETUP -------------------
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Salaam! Use /bind in a topic to control it.\nCommands: /testclose /testopen")
+    await update.message.reply_text("السلام عليكم 👋\n\nاستعمل /bind داخل موضوع للتحكم فيه.\nالأوامر المتوفرة:\n/testclose\n/testopen\n/times")
 
 async def on_ready(app: Application):
     schedule_today(app)
@@ -174,6 +197,7 @@ def main():
     application.add_handler(CommandHandler("bind", bind))
     application.add_handler(CommandHandler("testclose", testclose))
     application.add_handler(CommandHandler("testopen", testopen))
+    application.add_handler(CommandHandler("times", times_cmd))
     application.post_init = on_ready
 
     # start keep-alive web server in a thread
