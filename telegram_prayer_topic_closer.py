@@ -137,20 +137,54 @@ async def close_then_open(context: ContextTypes.DEFAULT_TYPE, prayer_name: str):
     await context.bot.reopenForumTopic(chat_id=chat_id, message_thread_id=thread_id)
     await context.bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=f"✅ تم إعادة فتح الموضوع بعد صلاة {prayer_name}.")
 
+# ------------------- DAILY TIMES POST -------------------
+
+async def post_daily_times(context: ContextTypes.DEFAULT_TYPE):
+    cfg = load_config()
+    if not cfg.get("bindings"):
+        return
+    b = cfg["bindings"][-1]
+    chat_id = b["chat_id"]
+    thread_id = b["thread_id"]
+
+    tz = ZoneInfo(TIMEZONE)
+    today = datetime.now(tz).date()
+    times = fetch_prayer_times(today)
+    date_str = today.strftime("%d-%m-%Y")
+
+    msg = f"🕌 أوقات الصلاة ليوم {date_str} (الجزائر العاصمة):\n\n"
+    arabic_names = {
+        "Fajr": "الفجر",
+        "Dhuhr": "الظهر",
+        "Asr": "العصر",
+        "Maghrib": "المغرب",
+        "Isha": "العشاء",
+    }
+    for name, dt in times.items():
+        msg += f"{arabic_names.get(name, name)}: {dt.strftime('%H:%M')}\n"
+
+    await context.bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=msg)
+
 def schedule_today(application: Application):
     tz = ZoneInfo(TIMEZONE)
     now = datetime.now(tz)
     times = fetch_prayer_times(now.date())
 
+    # Schedule closures
     for name, when_dt in times.items():
         if when_dt > now + timedelta(seconds=5):
             async def job(ctx: ContextTypes.DEFAULT_TYPE, prayer=name):
                 await close_then_open(ctx, prayer)
             application.job_queue.run_once(job, when=when_dt)
 
-    # reschedule tomorrow at 00:05
+    # Schedule tomorrow’s daily post & re-schedule tasks
     midnight_tomorrow = datetime.combine(now.date() + timedelta(days=1), time(0, 5), tzinfo=tz)
-    application.job_queue.run_once(lambda ctx: schedule_today(application), when=midnight_tomorrow)
+
+    async def tomorrow_job(ctx: ContextTypes.DEFAULT_TYPE):
+        await post_daily_times(ctx)
+        schedule_today(application)
+
+    application.job_queue.run_once(tomorrow_job, when=midnight_tomorrow)
 
 # ------------------- EXTRA COMMANDS -------------------
 
@@ -158,19 +192,17 @@ async def times_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tz = ZoneInfo(TIMEZONE)
     today = datetime.now(tz).date()
     times = fetch_prayer_times(today)
-
-    # Format date as DD-MM-YYYY
     date_str = today.strftime("%d-%m-%Y")
 
     msg = f"🕌 أوقات الصلاة ليوم {date_str} (الجزائر العاصمة):\n\n"
+    arabic_names = {
+        "Fajr": "الفجر",
+        "Dhuhr": "الظهر",
+        "Asr": "العصر",
+        "Maghrib": "المغرب",
+        "Isha": "العشاء",
+    }
     for name, dt in times.items():
-        arabic_names = {
-            "Fajr": "الفجر",
-            "Dhuhr": "الظهر",
-            "Asr": "العصر",
-            "Maghrib": "المغرب",
-            "Isha": "العشاء",
-        }
         msg += f"{arabic_names.get(name, name)}: {dt.strftime('%H:%M')}\n"
 
     await update.message.reply_text(msg)
@@ -178,9 +210,22 @@ async def times_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------- BOT SETUP -------------------
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("السلام عليكم 👋\n\nاستعمل /bind داخل موضوع للتحكم فيه.\nالأوامر المتوفرة:\n/testclose\n/testopen\n/times")
+    await update.message.reply_text(
+        "السلام عليكم 👋\n\n"
+        "استعمل /bind داخل موضوع للتحكم فيه.\n\n"
+        "الأوامر المتوفرة:\n"
+        "/testclose\n/testopen\n/times"
+    )
 
 async def on_ready(app: Application):
+    # Post today's times immediately once bot starts
+    dummy_ctx = type("Dummy", (), {"bot": app.bot})
+    try:
+        await post_daily_times(dummy_ctx)
+    except Exception as e:
+        print("Could not post daily times:", e)
+
+    # Schedule future
     schedule_today(app)
 
 def run_flask():
