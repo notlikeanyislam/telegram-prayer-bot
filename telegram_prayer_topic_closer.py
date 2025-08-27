@@ -239,9 +239,9 @@ def main():
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-# Ensure JobQueue exists
-if application.job_queue is None:
-    application.job_queue = application.job_queue_class(application)
+    # ✅ Ensure JobQueue exists
+    if application.job_queue is None:
+        application.job_queue = application.job_queue_class(application)
 
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("bind", bind))
@@ -256,6 +256,7 @@ if application.job_queue is None:
 
     # run the bot (blocks)
     application.run_polling(close_loop=False)
+
 
 if __name__ == "__main__":
     main()
